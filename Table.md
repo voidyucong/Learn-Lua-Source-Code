@@ -1,5 +1,5 @@
-#Table
-##Table常用操作
+# Table
+## Table常用操作
 
 > 插入
 
@@ -28,7 +28,7 @@ for k, v in pairs(t) do
 end
 ```
 
-##Table的基本结构
+## Table的基本结构
 在 Lua 实现中，Table 实际上由两部分构成：
 
 - Array
