@@ -80,7 +80,6 @@ Array 和 Hash Table;
 
 用于指向 Hash Table 中的空闲位置;
 
-## Hash Table 的存储方式
 
 ## 插入
 获取 key 的 value 并设置；key 不存在则创建新 key。
@@ -167,8 +166,6 @@ TValue *luaH_newkey (lua_State *L, Table *t, const TValue *key) {
 `luaH_newkey`是对 Hash Table 添加 一个新 key 的操作并返回对应的 value。Table 使用闭散列表，发生冲突时会写入空闲的位置并链到冲突链表的最后面。
 
 当 Hash Table 没有空余位置时会出发 rehash 操作。rehash 会检测 array 和 Hash Table 中的有效元素数量是否超过最大值的一半，如果 array 中的有效元素过少，则会相应调整 array 的尺寸，并把多余的元素放到 Hash Table 中，已达到较高的空间利用率。
-
-过程如下：
 
 ![Lua Table New Key](https://raw.githubusercontent.com/voidyucong/Learn-Lua-Source-Code/master/pic/Lua%20Table%20New%20Key.png)
 
