@@ -172,6 +172,20 @@ TValue *luaH_newkey (lua_State *L, Table *t, const TValue *key) {
 
 当 Hash Table 没有空余位置时会出发 rehash 操作。rehash 的主要工作是统计当前 table 中到底有多少有效键值对，以及决定数组部分需要开辟多少空间。 其原则是最终数组部分的利用率需要超过 50%。如果 array 中的有效元素过少或者但是需要的空间较大（例如在下标 1、2、100 处存在三个元素，则没必要开辟 100 的空间存放），则会相应调整 array 的尺寸，并把多余的元素放到 Hash Table 中，已达到较高的空间利用率。
 
+例如：
+
+```
+local t = {1, 2, nil, nil, 5} -- 1
+t.x = 1  -- 2
+```
+在table t 创建时，会把所有元素放置到 array 中，并设置 sizearray = 5，lsizenode = 0；
+
+接下来对 t 创建了一个新的key x，所以会对 Hash Table 进行 rehash 以容纳所有的 key-value 类型；
+
+rehash 过程中也会对 array 进行 resize，根据现有的大小会调整为8，之后发现有效元素只有3个（1、2、5），没超过 50% 使用率，所以会设置 sizearray = 4 并且将超出的元素 5 放到 Hash Table中；同理，收缩后发现有效元素（1、2）还是没超过 50% 利用率，设置 sizearray = 2；
+
+最终，sizearray = 2，array 中存放1、2，lsizenode = 1，Hash Table 中存放 5、x；
+
 
 ## 获取长度
 
@@ -187,12 +201,8 @@ print(#t)
 t = {1, 2, nil, 4, nil}
 print(#t)
 
-t = {1, 2, 3, 4}
-t[10] = 10
-print(#t)
-
 t = {1, nil, 2, 3, 4}
-t[10]=10
+t[100]=100
 t.x=1
 print(#t)
 ```
@@ -264,10 +274,10 @@ int luaH_getn (Table *t) {
 2
 
 > t = {1, nil, 2, 3, 4}
-> t[10]=10
+> t[100]=100
 > t.x=1
 > print(#t)
-10
+5
 ```
 结论：在不确定的情况下最好用 `table.count` 或者自定义 `__len` 方法。
 
@@ -355,3 +365,70 @@ LUA_API int lua_geti (lua_State *L, int idx, lua_Integer n) {
 ```
 
 ## 元表
+由于很多操作都需要对元表的元方法进行访问，并非所有元表都提供了需要的元方法，所以查询一个元方法存不存在就需要特别的优化。
+
+每个 Table 结构中都有一个 flags 字段，它用位的方式记录当前有哪些元方法。
+
+下面是从 table 中获取指定 key 的值。
+
+```
+void luaV_finishget (lua_State *L, const TValue *t, TValue *key, StkId val,
+                      const TValue *slot) {
+  int loop;  /* counter to avoid infinite loops */
+  const TValue *tm;  /* metamethod */
+  for (loop = 0; loop < MAXTAGLOOP; loop++) { /* 处理MAXTAGLOOP(2000)层的元表 */
+    if (slot == NULL) {  /* 't' is not a table? */
+      lua_assert(!ttistable(t));
+      tm = luaT_gettmbyobj(L, t, TM_INDEX);
+      if (ttisnil(tm))
+        luaG_typeerror(L, t, "index");  /* no metamethod */
+      /* else will try the metamethod */
+    }
+    else {  /* 't' is a table */
+      lua_assert(ttisnil(slot));
+      tm = fasttm(L, hvalue(t)->metatable, TM_INDEX);  /* table's metamethod */
+      if (tm == NULL) {  /* no metamethod? */
+        setnilvalue(val);  /* result is nil */
+        return;
+      }
+      /* else will try the metamethod */
+    }
+    if (ttisfunction(tm)) {  /* is metamethod a function? */
+      luaT_callTM(L, tm, t, key, val, 1);  /* call it */
+      return;
+    }
+    t = tm;  /* else try to access 'tm[key]' */
+    if (luaV_fastget(L,t,key,slot,luaH_get)) {  /* fast track? */
+      setobj2s(L, val, slot);  /* done */
+      return;
+    }
+    /* else repeat (tail call 'luaV_finishget') */
+  }
+  luaG_runerror(L, "'__index' chain too long; possible loop");
+}
+```
+luaV_finishget 一般是在 table 中直接获取 key 不存在时的后续步骤。如果 table 中没有，则从 metatable 中查找__index元方法，如果__index存在并且是 function，则调用 luaT_callTM 执行 __index 方法。否则将 metatable 按照同样的方法执行。注意，层次深度定义为宏 **MAXTAGLOOP(1000)**。
+
+```
+void luaT_callTM (lua_State *L, const TValue *f, const TValue *p1,
+                  const TValue *p2, TValue *p3, int hasres) {
+  ptrdiff_t result = savestack(L, p3);
+  StkId func = L->top;
+  setobj2s(L, func, f);  /* push function (assume EXTRA_STACK) */
+  setobj2s(L, func + 1, p1);  /* 1st argument */
+  setobj2s(L, func + 2, p2);  /* 2nd argument */
+  L->top += 3;
+  if (!hasres)  /* no result? 'p3' is third argument */
+    setobj2s(L, L->top++, p3);  /* 3rd argument */
+  /* metamethod may yield only when called from Lua code */
+  if (isLua(L->ci))
+    luaD_call(L, func, hasres);
+  else
+    luaD_callnoyield(L, func, hasres);
+  if (hasres) {  /* if has result, move it to its place */
+    p3 = restorestack(L, result);
+    setobjs2s(L, p3, --L->top);
+  }
+}
+```
+所有元方法的参数都是 table、key，并把结果返回。
