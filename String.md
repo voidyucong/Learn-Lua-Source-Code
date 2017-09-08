@@ -109,7 +109,7 @@ static TString *internshrstr (lua_State *L, const char *str, size_t l) {
 ```
 字符串放入哈希表时，查看表中是否有相同的字符串，有则把存在的字符串直接返回；没有则创建一个 TString。其中还涉及到了 gc 对它的处理和全局表的扩容。
 
-## UserData
+# UserData
 UserData 在存储形式上类似字符串，大概就是个有元表的字符串。
 
 ```
