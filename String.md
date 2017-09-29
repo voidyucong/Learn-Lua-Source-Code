@@ -34,9 +34,14 @@ typedef struct TString {
 - lnglen: 长字符串的长度
 - hnext: 开散列的冲突键；
 
-所有短字符串都会只保留一份在全局表 shrt 中，而所有字符串都会被保存在全局表 strcache 中。
+所有短字符串都会只保留一份在全局表 strt 中。
 
 字符串的数据内容并没有被分配独立一块内存来保存，而是直接最加在 TString 结构的后面。用 getstr 这个宏就可以取到实际的 C 字符串指针。
+
+```lua
+#define getstr(ts)  \
+  check_exp(sizeof((ts)->extra), cast(char *, (ts)) + sizeof(UTString))
+```
 
 ## 比较
 长短两种类型是需要不同的比较方法。
